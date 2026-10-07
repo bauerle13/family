@@ -61,11 +61,9 @@ export const flowOf = (t, acct) => (acct?.flip_sign ? -1 : 1) * Number(t.amount)
 export function categoryOf(t) {
   if (t.category) return t.category;
   if (t.ruleCategory) return t.ruleCategory;
-  if (t.type === 'transfer') return 'Transfer';
-  if (/\btransfer\b|payment,? thank you|autopay payment - thank/i.test(t.description || '')) return 'Transfer';
-  if (!t.teller_category) return 'Uncategorized';
-  const c = t.teller_category;
-  return c.charAt(0).toUpperCase() + c.slice(1);
+  if (t.bank_category) return t.bank_category;
+  if (/\btransfer\b|payment,? thank you/i.test(t.description || '')) return 'Transfer';
+  return 'Uncategorized';
 }
 
 export const isExcluded = (t) => EXCLUDED.has(categoryOf(t).toLowerCase());

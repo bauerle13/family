@@ -8,7 +8,7 @@ const S = {
   accounts: [],
   txns: [],
   bills: [],
-  enrollments: [],
+  items: [],
   settings: {},
   detected: [],
   charts: [],
@@ -58,16 +58,16 @@ async function fetchAll(table, build) {
 
 async function loadAll() {
   const since = F.iso(F.addDays(F.today(), -430));
-  const [accounts, txns, bills, enrollments, settings] = await Promise.all([
+  const [accounts, txns, bills, items, settings] = await Promise.all([
     fetchAll('accounts', (q) => q.select('*').order('institution').order('name')),
     fetchAll('transactions', (q) => q.select('*').gte('date', since).order('date', { ascending: false }).order('id')),
     fetchAll('bills', (q) => q.select('*').order('next_due')),
-    fetchAll('enrollments', (q) => q.select('id,institution,status,last_synced,last_error,created_at')),
+    fetchAll('items', (q) => q.select('id,institution,status,last_synced,last_error,created_at')),
     sb.from('settings').select('data').eq('id', 1).maybeSingle(),
   ]);
   S.accounts = accounts;
   S.bills = bills;
-  S.enrollments = enrollments;
+  S.items = items;
   S.settings = settings.data?.data || {};
   const rules = S.settings.rules || {};
   for (const t of txns) {
@@ -161,16 +161,16 @@ function render() {
 }
 
 function renderSyncStatus() {
-  const times = S.enrollments.map((e) => e.last_synced).filter(Boolean).sort();
+  const times = S.items.map((e) => e.last_synced).filter(Boolean).sort();
   const last = times[times.length - 1];
-  if (!last) return ($('#sync-status').textContent = S.enrollments.length ? 'Waiting for first sync' : '');
+  if (!last) return ($('#sync-status').textContent = S.items.length ? 'Waiting for first sync' : '');
   const mins = Math.round((Date.now() - new Date(last)) / 60000);
   const ago = mins < 60 ? `${mins}m` : mins < 1440 ? `${Math.round(mins / 60)}h` : `${Math.round(mins / 1440)}d`;
   $('#sync-status').textContent = `Bank data synced ${ago} ago`;
 }
 
 function problemBanner() {
-  const bad = S.enrollments.filter((e) => e.status !== 'active');
+  const bad = S.items.filter((e) => e.status !== 'active');
   if (!bad.length) return '';
   return `<div class="banner warn"><strong>Needs attention:</strong> ${bad.map((e) => esc(e.institution || e.id)).join(', ')} ${bad.length > 1 ? 'are' : 'is'} disconnected or erroring. Go to <a href="#" data-action="tab" data-tab="accounts">Accounts</a> and click Reconnect.</div>`;
 }
@@ -502,33 +502,34 @@ function accounts() {
       <td class="num">${a.is_manual ? `<input class="inline num" type="number" step="0.01" data-change="acct-balance" data-id="${esc(a.id)}" value="${esc(a.balance_ledger ?? '')}">` : money(balanceOf(a))}</td>
       <td class="center"><input type="checkbox" data-change="acct-flag" data-field="include_in_goal" data-id="${esc(a.id)}" ${a.include_in_goal ? 'checked' : ''} ${a.type === 'credit' || a.type === 'loan' ? 'disabled' : ''}></td>
       <td class="center"><input type="checkbox" data-change="acct-flag" data-field="hidden" data-id="${esc(a.id)}" ${a.hidden ? 'checked' : ''}></td>
-      <td class="center">${a.is_manual ? '' : `<input type="checkbox" data-change="acct-flag" data-field="flip_sign" data-id="${esc(a.id)}" ${a.flip_sign ? 'checked' : ''}>`}</td>
       <td>${a.is_manual ? `<button class="icon-btn" title="Delete" data-action="del-acct" data-id="${esc(a.id)}">✕</button>` : ''}</td>
     </tr>`;
-  const head = '<thead><tr><th>Name</th><th>Type</th><th class="num">Balance</th><th class="center">Home fund</th><th class="center">Hide</th><th class="center">Flip ±</th><th></th></tr></thead>';
+  const head = '<thead><tr><th>Name</th><th>Type</th><th class="num">Balance</th><th class="center">Home fund</th><th class="center">Hide</th><th></th></tr></thead>';
+  const used = S.items.length;
 
   return `
     ${problemBanner()}
     <div class="card">
       <div class="card-head"><h2>Connected banks</h2>
         <div class="actions">
-          <button class="btn primary" data-action="connect">Connect a bank</button>
-          <a class="btn ghost" href="${esc(cfg.syncWorkflowUrl)}" target="_blank" rel="noopener">Sync now ↗</a>
+          <button class="btn primary" data-action="connect">Connect bank or card</button>
+          <button class="btn" data-action="connect-invest">Connect retirement</button>
+          <button class="btn ghost" data-action="sync-now" ${used ? '' : 'disabled'}>Sync now</button>
         </div>
       </div>
-      <p class="small muted">Your bank login happens in Teller's secure window. This app never sees your username or password. New data arrives every 3 hours, or right away when you click <em>Sync now</em> and then <em>Run workflow</em> on GitHub.</p>
-      ${S.enrollments.length ? `<ul class="list">${S.enrollments.map((e) => `
+      <p class="small muted">You log in to your bank inside Plaid's secure window; this app never sees your username or password. Balances and transactions refresh every 3 hours, or right away with <em>Sync now</em>. Plaid's free plan allows 10 connections in total, ever (removing one doesn't give it back), so connect each bank once and use <em>Reconnect</em> if it ever breaks. <strong>${used} of 10 used.</strong></p>
+      ${S.items.length ? `<ul class="list">${S.items.map((e) => `
         <li><span class="grow"><strong>${esc(e.institution || e.id)}</strong>
-          <div class="small ${e.status === 'active' ? 'muted' : 'neg'}">${e.status === 'active' ? 'Connected' : e.status === 'disconnected' ? 'Disconnected — reconnect to keep syncing' : 'Error: ' + esc(e.last_error || '')} · last synced ${ago(e.last_synced)}</div></span>
-          <span class="actions">${e.status !== 'active' ? `<button class="btn small" data-action="reconnect" data-id="${esc(e.id)}">Reconnect</button>` : ''}<button class="btn ghost small" data-action="del-enr" data-id="${esc(e.id)}">Remove</button></span></li>`).join('')}</ul>` : '<p class="muted">No banks connected yet.</p>'}
+          <div class="small ${e.status === 'active' ? 'muted' : 'neg'}">${e.status === 'active' ? 'Connected' : e.status === 'disconnected' ? 'Bank needs you to log in again. Click Reconnect' : 'Error: ' + esc(e.last_error || '')} · last synced ${ago(e.last_synced)}</div></span>
+          <span class="actions">${e.status !== 'active' ? `<button class="btn small" data-action="reconnect" data-id="${esc(e.id)}">Reconnect</button>` : ''}<button class="btn ghost small" data-action="del-item" data-id="${esc(e.id)}">Remove</button></span></li>`).join('')}</ul>` : '<p class="muted">No banks connected yet.</p>'}
     </div>
 
     <div class="card">
       <h2>Accounts</h2>
-      <p class="small muted"><strong>Home fund</strong>: count this balance toward your down payment. <strong>Flip ±</strong>: tick if purchases show as money in for that account.</p>
-      <div class="table-wrap"><table class="table">${head}<tbody>${linked.map(acctRow).join('') || '<tr><td colspan="7" class="muted">Linked accounts appear after the first sync.</td></tr>'}</tbody></table></div>
+      <p class="small muted">Tick <strong>Home fund</strong> on every account you're saving the down payment in.</p>
+      <div class="table-wrap"><table class="table">${head}<tbody>${linked.map(acctRow).join('') || '<tr><td colspan="6" class="muted">Linked accounts appear here after you connect a bank.</td></tr>'}</tbody></table></div>
       <h3 class="sub">Manual accounts</h3>
-      <p class="small muted">For TIAA, American Funds or anything else that can't be linked. Type a new balance and click away to save.</p>
+      <p class="small muted">For anything Plaid can't link. Type a new balance and click away to save.</p>
       ${manual.length ? `<div class="table-wrap"><table class="table">${head}<tbody>${manual.map(acctRow).join('')}</tbody></table></div>` : ''}
       <form id="acct-form" class="form-grid">
         <label>Institution<input name="institution" placeholder="TIAA" required></label>
@@ -540,27 +541,64 @@ function accounts() {
     </div>`;
 }
 
-function openTeller(enrollmentId) {
-  if (!window.TellerConnect) return toast('Teller Connect did not load. Check your ad blocker and refresh.', true);
-  const tc = window.TellerConnect.setup({
-    applicationId: cfg.tellerAppId,
-    environment: cfg.tellerEnvironment,
-    products: ['balance', 'transactions'],
-    selectAccount: 'disabled',
-    ...(enrollmentId ? { enrollmentId } : {}),
-    onSuccess: async (enr) => {
-      const row = { id: enr.enrollment.id, institution: enr.enrollment.institution.name, access_token: enr.accessToken };
-      const { error } = await sb.from('enrollments').insert(row);
-      if (error && error.code === '23505') {
-        await run(sb.from('enrollments').update({ access_token: row.access_token, status: 'active', last_error: null }).eq('id', row.id));
-      } else if (error) {
-        return toast(`Could not save the connection: ${error.message}`, true);
+async function callPlaid(body) {
+  const { data, error } = await sb.functions.invoke('plaid', { body });
+  if (error) {
+    let msg = error.message;
+    try {
+      const detail = await error.context?.json?.();
+      if (detail?.error) msg = detail.error;
+    } catch {}
+    throw new Error(msg);
+  }
+  if (data?.error) throw new Error(data.error);
+  return data;
+}
+
+async function openPlaid({ mode = 'bank', itemId } = {}) {
+  if (!window.Plaid) return toast('Plaid did not load. Check your ad blocker and refresh.', true);
+  if (!itemId && S.items.length >= 10) return toast('All 10 free Plaid connections are used.', true);
+  let token;
+  try {
+    toast('Opening Plaid…');
+    token = (await callPlaid({ action: 'link_token', mode, item_id: itemId })).link_token;
+  } catch (e) {
+    return toast(e.message, true);
+  }
+  const handler = window.Plaid.create({
+    token,
+    onSuccess: async (publicToken, metadata) => {
+      toast('Connected. Pulling your accounts…');
+      try {
+        if (itemId) await callPlaid({ action: 'relinked', item_id: itemId });
+        else await callPlaid({ action: 'exchange', public_token: publicToken, institution: metadata?.institution?.name });
+        toast(`${metadata?.institution?.name || 'Bank'} connected. Older history can take a few minutes; click Sync now later to fill it in.`);
+      } catch (e) {
+        toast(e.message, true);
       }
-      toast(`${row.institution} connected. Click "Sync now" to pull data.`);
       await reload();
     },
+    onExit: (err) => {
+      if (err) toast(err.display_message || err.error_message || 'Plaid closed with an error', true);
+    },
   });
-  tc.open();
+  handler.open();
+}
+
+async function syncNow(btn) {
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Syncing…';
+  }
+  try {
+    const r = await callPlaid({ action: 'sync' });
+    const failed = (r.results || []).filter((x) => x.error);
+    if (failed.length) toast(`Synced, but ${failed.map((f) => f.item).join(', ')} had a problem.`, true);
+    else toast('Bank data is up to date');
+  } catch (e) {
+    toast(e.message, true);
+  }
+  await reload();
 }
 
 async function saveSettings(patch) {
@@ -587,11 +625,19 @@ document.addEventListener('click', async (ev) => {
     location.hash = S.tab;
     return render();
   }
-  if (action === 'connect') return openTeller();
-  if (action === 'reconnect') return openTeller(id);
-  if (action === 'del-enr') {
-    if (!confirm('Remove this bank? Its accounts and transactions will be deleted from the app (not from your bank).')) return;
-    if (await run(sb.from('enrollments').delete().eq('id', id), 'Bank removed')) reload();
+  if (action === 'connect') return openPlaid({ mode: 'bank' });
+  if (action === 'connect-invest') return openPlaid({ mode: 'investment' });
+  if (action === 'reconnect') return openPlaid({ itemId: id });
+  if (action === 'sync-now') return syncNow(el);
+  if (action === 'del-item') {
+    if (!confirm('Remove this bank? Its accounts and transactions are deleted from the app (not from your bank). This does NOT give back one of your 10 free Plaid connections.')) return;
+    try {
+      await callPlaid({ action: 'remove', item_id: id });
+      toast('Bank removed');
+    } catch (e) {
+      toast(e.message, true);
+    }
+    reload();
   }
   if (action === 'del-acct') {
     if (!confirm('Delete this manual account and its transactions?')) return;

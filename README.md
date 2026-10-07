@@ -5,41 +5,38 @@ A private budget app for two people. It tracks income and spending, shows live b
 | Piece | What it does | Cost |
 |---|---|---|
 | **GitHub Pages** | Hosts the website | Free |
-| **Supabase** | Logins and the database (Row Level Security keeps it to your household) | Free tier |
-| **Teller** | Connects to Chase and SoFi (read-only balances and transactions) | Free developer tier, up to 100 live connections |
-| **GitHub Actions** | Pulls fresh bank data every 3 hours | Free for public repos |
+| **Supabase** | Logins, the database, and a small server function that talks to Plaid | Free tier |
+| **Plaid** | Connects to Chase, SoFi, and possibly TIAA / American Funds (read-only) | Free Trial plan, up to 10 connections |
 
-**Your bank username and password are never stored anywhere.** You log in to your bank inside Teller's secure pop-up. Supabase only keeps the read-only access token Teller hands back, and that token is useless without your private Teller certificate. The certificate lives only in GitHub's encrypted secrets.
+**Your bank username and password are never stored anywhere.** You log in to your bank inside Plaid's secure pop-up. Plaid gives back a read-only access token. That token, and your Plaid secret, live only inside Supabase on the server side. The website can't read them, and they're never in your GitHub repo.
+
+**Plaid's free plan allows 10 connections in total, and removing one doesn't give it back.** One connection = one login at one bank. Chase, SoFi, TIAA and American Funds use 4, leaving 6 spare. If a bank breaks, use **Reconnect** (free); don't remove it and add it again.
 
 Total setup time is about 45 minutes. Do the parts in order.
 
 ---
 
-## Part 1 — Create your GitHub account and repository
+## Part 1 — Create your GitHub account and website
 
-1. Go to **github.com** and click **Sign up**. Pick a username (it becomes part of your web address, e.g. `bauerle-family.github.io`). Verify your email.
-2. Turn on two-factor authentication: profile picture → **Settings** → **Password and authentication** → **Enable two-factor authentication**. Do this — this account will hold the keys to your bank sync.
-3. Create the repository from **VS Code** (it uploads every file, including the hidden `.github` folder that the GitHub website upload tends to skip):
+1. Go to **github.com** → **Sign up**. Pick a username (it becomes part of your web address, e.g. `bauerle-family.github.io`). Verify your email.
+2. Turn on two-factor authentication: profile picture → **Settings** → **Password and authentication** → **Enable two-factor authentication**.
+3. Publish the code from **VS Code**:
    1. Unzip `family-budget.zip` somewhere permanent, like `Documents/family-budget`.
-   2. In VS Code: **File → Open Folder…** → pick that folder.
-   3. Click the **Source Control** icon on the left (the branching icon) → **Initialize Repository**.
-   4. Type a message like `First version` → **Commit** (say Yes if it asks to stage all changes).
-   5. Click **Publish Branch** → sign in to GitHub when asked → name it `family-budget` → choose **Publish to GitHub public repository**. Free GitHub Pages requires a public repo; see "Is a public repo safe?" below.
-4. Turn on the website: repo → **Settings** → **Pages** → under **Build and deployment**, Source: **Deploy from a branch**, Branch: **main**, folder **/ (root)** → **Save**. After a minute or two the page shows your address: `https://YOUR-USERNAME.github.io/family-budget/`.
+   2. VS Code → **File → Open Folder…** → pick that folder.
+   3. Click the **Source Control** icon on the left → **Initialize Repository**.
+   4. Type `First version` → **Commit** (say Yes if it asks to stage all changes).
+   5. Click **Publish Branch** → sign in to GitHub → name it `family-budget` → **Publish to GitHub public repository**. Free GitHub Pages requires a public repo; see "Is a public repo safe?" below.
+4. Turn on the website: repo on github.com → **Settings** → **Pages** → Source: **Deploy from a branch**, Branch: **main**, folder **/ (root)** → **Save**. After a minute or two it shows your address: `https://YOUR-USERNAME.github.io/family-budget/`.
 
 ---
 
 ## Part 2 — Set up Supabase (database + logins)
 
-1. Go to **supabase.com** → **Start your project** → **Continue with GitHub** (uses the account you just made).
-2. **New project**:
-   - Name: `family-budget`
-   - Database password: click **Generate a password** and save it in your password manager
-   - Region: **East US (Ohio)** or the closest one
-   - Click **Create new project** and wait about 2 minutes.
-3. **Create the tables:** left menu → **SQL Editor** → **New query**. Open `supabase/schema.sql` from this project, copy all of it, paste it in, and click **Run**. You should see "Success. No rows returned."
-4. **Create both logins:** left menu → **Authentication** → **Users** → **Add user** → **Create new user**. Enter an email and a strong password, keep **Auto Confirm User** checked, and click **Create user**. Repeat for the second adult.
-5. **Add both people to the household.** Back in **SQL Editor** → **New query**, paste this, change the two emails and names, and click **Run**:
+1. **supabase.com** → **Start your project** → **Continue with GitHub**.
+2. **New project**: name `family-budget`. Click **Generate a password** and save it in your password manager. Region **East US (Ohio)** or the closest one. Click **Create new project** and wait about 2 minutes.
+3. **Create the tables:** **SQL Editor** → **New query**. Paste all of `supabase/schema.sql` → **Run**. You should see "Success. No rows returned."
+4. **Create both logins:** **Authentication** → **Users** → **Add user** → **Create new user**. Enter an email and a strong password, keep **Auto Confirm User** checked. Repeat for the second adult.
+5. **Add both people to the household:** **SQL Editor** → **New query**. Change the emails and names, then **Run**:
 
    ```sql
    insert into public.members (user_id, display_name)
@@ -49,88 +46,84 @@ Total setup time is about 45 minutes. Do the parts in order.
    select id, 'Partner' from auth.users where email = 'partner@example.com';
    ```
 
-6. **Block strangers from signing up:** **Authentication** → **Sign In / Providers** → **Email** → turn **off** "Allow new users to sign up" → **Save**. (Exact labels may move around in Supabase's dashboard over time; the setting is in the email provider options.)
-7. **Set the site address:** **Authentication** → **URL Configuration** → **Site URL** = `https://YOUR-USERNAME.github.io/family-budget/` → **Save**.
-8. **Copy your keys:** gear icon **Project Settings** → **API Keys**. You need three values. Keep this tab open:
-   - **Project URL** (looks like `https://abcdefgh.supabase.co`). It's also under **Project Settings → Data API**.
-   - **Publishable key** (starts with `sb_publishable_`). This one goes in the website.
-   - **Secret key** (starts with `sb_secret_`; click **Reveal**). This one goes **only** into GitHub secrets in Part 4. Never paste it into any file.
-
-   > On the **Legacy API keys** tab, `anon` works in place of the publishable key and `service_role` works in place of the secret key.
+6. **Block strangers from signing up:** **Authentication** → **Sign In / Providers** → **Email** → turn **off** "Allow new users to sign up" → **Save**.
+7. **Site address:** **Authentication** → **URL Configuration** → **Site URL** = `https://YOUR-USERNAME.github.io/family-budget/` → **Save**.
+8. **Copy two values** from **Project Settings** → **API Keys** (the Project URL is also under **Data API**):
+   - **Project URL**, like `https://abcdefgh.supabase.co`
+   - **Publishable key**, starting with `sb_publishable_`. If you only see Legacy keys, the `anon` key works too.
 
 ---
 
-## Part 3 — Set up Teller (bank connection)
+## Part 3 — Set up Plaid (bank connection)
 
-1. Go to **teller.io** → **Sign up**. Verify your email and turn on two-factor if offered.
-2. In the Teller dashboard, open your **Application** and copy the **Application ID** (starts with `app_`).
-3. Go to **Certificates** → create a new certificate. Teller downloads a zip containing `certificate.pem` and `private_key.pem`.
-   - **Keep `private_key.pem` secret.** Don't email it, and don't put it in the project folder. (The project's `.gitignore` blocks `.pem` files just in case.)
-   - Store the zip somewhere safe, like your password manager's secure notes or an encrypted folder.
-4. You'll use the **development** environment. It connects to your real banks and is free for up to 100 connections, which is far more than you need.
+1. Go to **dashboard.plaid.com/signup**. When it asks how you'll use Plaid, choose **Personal use** ("build something for fun"). Verify your email.
+2. Apply for the free **Trial plan**: there's a button on the dashboard home page, or go to **dashboard.plaid.com/trial-plan**. It asks you to verify your identity, and most applications are approved automatically.
+3. Turn on two-factor authentication in your Plaid account settings.
+4. Go to **Developers → Keys** and copy:
+   - **client_id**
+   - **Production secret**. Treat it like a password. It goes only into Supabase in Part 4.
 
----
-
-## Part 4 — Give GitHub the secrets for the sync job
-
-Repo → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**. Create these four, spelled exactly like this:
-
-| Name | Value |
-|---|---|
-| `TELLER_CERT` | Open `certificate.pem` in a text editor and paste **everything**, including the `-----BEGIN CERTIFICATE-----` and `-----END CERTIFICATE-----` lines |
-| `TELLER_KEY` | Same for `private_key.pem`: everything, including the BEGIN/END lines |
-| `SUPABASE_URL` | Your Project URL from Part 2 |
-| `SUPABASE_SECRET_KEY` | Your Supabase **secret** key from Part 2 |
-
-GitHub encrypts these. Not even you can view them again after saving; you can only replace them.
+If Chase or another bank later shows a message about needing extra registration, check the Plaid dashboard for an "OAuth institutions" or registration checklist. Plaid says a few banks need an extra step even on the Trial plan.
 
 ---
 
-## Part 5 — Point the website at your accounts
+## Part 4 — Install the server function in Supabase
 
-Edit `config.js` in VS Code and fill in the four placeholders:
+This small function holds your Plaid secret and does the bank syncing. Everything happens in the Supabase dashboard, with nothing to install.
+
+1. **Edge Functions** → **Deploy a new function** → **Via Editor**.
+2. Name it exactly **`plaid`**. Delete the sample code, paste all of `supabase/functions/plaid/index.ts`, and click **Deploy**.
+3. Open the function's **Details / Settings** and turn **off** "Enforce JWT verification" (sometimes labeled "Verify JWT") → **Save**. The function checks logins itself, and this lets the 3-hour scheduler reach it.
+4. **Edge Functions** → **Secrets** → add these four:
+
+   | Name | Value |
+   |---|---|
+   | `PLAID_CLIENT_ID` | your Plaid client_id |
+   | `PLAID_SECRET` | your Plaid **Production** secret |
+   | `PLAID_ENV` | `production` |
+   | `CRON_SECRET` | a long random password you make up, e.g. 40 random characters from your password manager. Save it; you need it in the next step |
+
+5. **Turn on automatic syncing:** **SQL Editor** → **New query**. Paste `supabase/schedule.sql`, replace the two placeholders (your Project URL and the same `CRON_SECRET`), then **Run**. If it complains about an extension, go to **Database → Extensions**, enable **pg_cron** and **pg_net**, and run it again.
+
+---
+
+## Part 5 — Point the website at Supabase
+
+Edit `config.js` in VS Code:
 
 ```js
 window.APP_CONFIG = {
   supabaseUrl: 'https://abcdefgh.supabase.co',
   supabaseKey: 'sb_publishable_xxxxxxxx',
-  tellerAppId: 'app_xxxxxxxx',
-  tellerEnvironment: 'development',
-  syncWorkflowUrl: 'https://github.com/YOUR-USERNAME/family-budget/actions/workflows/sync.yml',
 };
 ```
 
-Commit and **Sync Changes** (push) in VS Code. GitHub Pages republishes in about a minute.
+**Commit** and **Sync Changes** in VS Code. GitHub Pages republishes in about a minute.
 
 ---
 
 ## Part 6 — First run
 
 1. Open `https://YOUR-USERNAME.github.io/family-budget/` and sign in.
-2. Go to **Accounts** → **Connect a bank** → search **Chase** → log in → approve. Do the same for **SoFi**.
-   - If SoFi isn't in Teller's list, add it as a **manual account** for now and update its balance by hand. Chase will still sync automatically.
-3. Click **Sync now** (opens GitHub) → **Run workflow** → tick **Re-pull full transaction history** → **Run workflow**. Wait for the green check (about a minute), then click **Reload** in the app.
-4. On the **Accounts** tab:
-   - Tick **Home fund** next to the SoFi savings account (and anything else you're saving for the house in).
-   - Add **TIAA** and **American Funds** as manual accounts with type **Retirement**. Update their balances whenever you check them, monthly is plenty.
-   - Look at a Chase credit card purchase on the Transactions tab. If purchases show as green "money in," tick **Flip ±** for that card.
-5. Fill in the **Home Goal** tab.
-6. After the history loads, open **Bills**. Under **Suggested from your history**, click **Add** for real bills and paychecks and **Ignore** for the rest. Add anything it missed (rent, insurance, annual subscriptions) with the form.
-7. On **Transactions**, fix any wrong categories. When it asks "Always use … for …?", say OK, and future transactions from that merchant get the same category.
+2. **Accounts** → **Connect bank or card** → **Chase** → log in → approve. Repeat for **SoFi**.
+3. **Connect retirement** → search **TIAA**, then **American Funds**. If either one isn't listed or won't connect, add it as a **manual account** instead (type: Retirement) and update the balance monthly.
+4. Plaid needs a few minutes to fetch older history after a new connection. Wait 5–10 minutes, then click **Sync now**.
+5. On **Accounts**, tick **Home fund** next to the SoFi savings account (and anything else you're saving for the house in).
+6. Fill in the **Home Goal** tab.
+7. Open **Bills**. Under **Suggested from your history**, click **Add** for real bills and paychecks and **Ignore** for the rest. Add anything it missed with the form.
+8. On **Transactions**, fix any wrong categories. When it asks "Always use … for …?", say OK, and future transactions from that merchant get the same category.
 
-From then on, bank data refreshes every 3 hours by itself.
+From then on, bank data refreshes every 3 hours by itself, and **Sync now** refreshes it on demand.
 
 ---
 
 ## Good to know
 
-**Is a public repo safe?** Yes, as long as no secrets are in it. The repo holds only website code. All financial data lives in Supabase behind your logins, and Row Level Security blocks everyone who isn't in the `members` table. The publishable key in `config.js` is designed to be public. The Teller certificate and Supabase secret key exist only in GitHub's encrypted secrets.
+**Is a public repo safe?** Yes. The repo holds only website code. All financial data lives in Supabase behind your two logins, and Row Level Security blocks anyone not in the `members` table. The publishable key in `config.js` is designed to be public. Your Plaid secret and bank access tokens exist only inside Supabase.
 
-**Things that can pause on the free tiers:**
-- *GitHub* turns off scheduled workflows in public repos after 60 days with no commits. You'll get an email. Go to the **Actions** tab and click **Enable workflow**, or make any small commit.
-- *Supabase* pauses free projects after a week with no activity. The 3-hour sync keeps it active. If it ever pauses, click **Restore** in the Supabase dashboard; your data is kept.
+**Free-tier pauses.** Supabase pauses free projects after about a week with no activity. Opening the app at least once a week guarantees it stays awake. The 3-hour sync probably counts as activity too, but don't rely on it. If it ever pauses, click **Restore** in the Supabase dashboard. Nothing is lost.
 
-**A bank says "Disconnected."** Banks occasionally require you to log in again (password change, new security check). The app shows a yellow banner; go to **Accounts** → **Reconnect**.
+**A bank says it needs you to log in again.** Banks occasionally require this after a password change or a new security check. You'll see a yellow banner; go to **Accounts** → **Reconnect**. Reconnecting does not use up one of the 10 connections.
 
 **How bill predictions work.** The app looks through the last ~13 months for charges or deposits from the same merchant at a steady rhythm (weekly, every 2 weeks, monthly, quarterly, yearly) and similar amounts. Groceries, gas, dining and shopping are deliberately left out. Those count as "everyday spending," which the projection subtracts as a daily average from the last 90 days instead.
 
@@ -143,20 +136,21 @@ From then on, bank data refreshes every 3 hours by itself.
 | Problem | Fix |
 |---|---|
 | Sign-in works but you see "hasn't been added to the household" | Run the Part 2, step 5 SQL with that exact email |
-| Sync job fails with `Missing GitHub secret` | Check the four secret names in Part 4. They must match exactly |
-| Sync job fails with a certificate or 401 error | Re-paste `TELLER_CERT` / `TELLER_KEY` including the BEGIN/END lines. Make sure the certificate belongs to the same Teller app as `tellerAppId` |
-| "Connect a bank" does nothing | An ad or tracker blocker may be blocking `cdn.teller.io`. Allow it for your site |
-| Balances look old | **Accounts** → **Sync now** → **Run workflow**, then **Reload** |
+| "Connect" shows an error about `PLAID_CLIENT_ID` | Check the Part 4 secrets, then redeploy the function |
+| "Connect" shows `INVALID_API_KEYS` | Use the **Production** secret (not Sandbox) and set `PLAID_ENV` to `production` |
+| Any button says "Not signed in" or "Invalid API key" | Edge Functions → Secrets → add `SUPABASE_SECRET_KEY` with your Supabase secret key (`sb_secret_…`, under Project Settings → API Keys) |
+| Nothing happens when you click Connect | An ad or tracker blocker may be blocking `cdn.plaid.com`. Allow it for your site |
+| Balances never update on their own | **SQL Editor**: run `select * from cron.job_run_details order by start_time desc limit 5;` to see the scheduler's recent runs, and check the function's **Logs** tab |
 
 ## Files
 
 ```
-index.html                  page shell
-styles.css                  look and feel (light + dark mode)
-config.js                   your public settings (Part 5)
-js/app.js                   screens and buttons
-js/finance.js               bill detection, projections, home-goal math
-scripts/sync.mjs            bank → database sync (runs on GitHub Actions)
-.github/workflows/sync.yml  sync schedule (every 3 hours + manual button)
-supabase/schema.sql         database tables and security rules
+index.html                         page shell
+styles.css                         look and feel (light + dark mode)
+config.js                          your public settings (Part 5)
+js/app.js                          screens and buttons
+js/finance.js                      bill detection, projections, home-goal math
+supabase/schema.sql                database tables and security rules (Part 2)
+supabase/functions/plaid/index.ts  server function that talks to Plaid (Part 4)
+supabase/schedule.sql              3-hour automatic sync (Part 4)
 ```
