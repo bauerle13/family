@@ -362,6 +362,20 @@ function nextDueOf(b) {
   return occ[0] ? F.iso(occ[0]) : b.next_due;
 }
 
+function billEditRow(b) {
+  return `
+    <tr class="editing"><td colspan="6">
+      <form id="bill-edit-form" data-id="${b.id}" class="form-grid">
+        <label>Name<input name="name" value="${esc(b.name)}" required></label>
+        <label>Amount<input type="number" name="amount" step="0.01" min="0" value="${esc(b.amount)}" required></label>
+        <label>Type<select name="kind"><option value="expense" ${b.kind === 'expense' ? 'selected' : ''}>Bill / subscription</option><option value="income" ${b.kind === 'income' ? 'selected' : ''}>Income</option></select></label>
+        <label>How often<select name="frequency">${Object.entries(FREQ_LABEL).map(([k, v]) => `<option value="${k}" ${k === b.frequency ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+        <label>Next due<input type="date" name="next_due" value="${nextDueOf(b)}" required></label>
+        <div class="form-actions actions"><button class="btn primary">Save</button><button type="button" class="btn ghost" data-action="cancel-edit-bill">Cancel</button></div>
+      </form>
+    </td></tr>`;
+}
+
 function bills() {
   const p = projection(60);
   const monthlyOut = S.bills.filter((b) => b.active && b.kind === 'expense').reduce((s, b) => s + b.amount * F.FREQ[b.frequency].perMonth, 0);
@@ -395,14 +409,14 @@ function bills() {
       <div class="table-wrap">
         <table class="table">
           <thead><tr><th>Name</th><th>Type</th><th>How often</th><th>Next</th><th class="num">Amount</th><th></th></tr></thead>
-          <tbody>${S.bills.map((b) => `
+          <tbody>${S.bills.map((b) => b.id === S.editingBill ? billEditRow(b) : `
             <tr class="${b.active ? '' : 'pending'}">
               <td>${esc(b.name)}</td>
               <td>${b.kind === 'income' ? 'Income' : 'Bill'}</td>
               <td>${FREQ_LABEL[b.frequency]}</td>
               <td class="nowrap">${niceDate(nextDueOf(b))}</td>
               <td class="num ${b.kind === 'income' ? 'pos' : ''}">${money(b.amount)}</td>
-              <td class="nowrap"><button class="icon-btn" data-action="toggle-bill" data-id="${b.id}">${b.active ? 'Pause' : 'Resume'}</button><button class="icon-btn" title="Delete" data-action="del-bill" data-id="${b.id}">✕</button></td>
+              <td class="nowrap"><button class="icon-btn" data-action="edit-bill" data-id="${b.id}">Edit</button><button class="icon-btn" data-action="toggle-bill" data-id="${b.id}">${b.active ? 'Pause' : 'Resume'}</button><button class="icon-btn" title="Delete" data-action="del-bill" data-id="${b.id}">✕</button></td>
             </tr>`).join('') || '<tr><td colspan="6" class="muted">No bills yet.</td></tr>'}
           </tbody>
         </table>
@@ -650,14 +664,25 @@ document.addEventListener('click', async (ev) => {
     if (!confirm('Delete this bill?')) return;
     if (await run(sb.from('bills').delete().eq('id', id))) reload();
   }
+  if (action === 'edit-bill') {
+    S.editingBill = id;
+    return render();
+  }
+  if (action === 'cancel-edit-bill') {
+    S.editingBill = null;
+    return render();
+  }
   if (action === 'toggle-bill') {
     const b = S.bills.find((x) => x.id === id);
     if (await run(sb.from('bills').update({ active: !b.active }).eq('id', id))) reload();
   }
   if (action === 'confirm-rec') {
     const r = S.detected[+el.dataset.i];
-    const ok = await run(sb.from('bills').insert({ name: r.name, amount: r.amount, kind: r.kind, frequency: r.frequency, next_due: r.nextDue, match_key: r.key }), `${r.name} added`);
-    if (ok) reload();
+    const { data, error } = await sb.from('bills').insert({ name: r.name, amount: r.amount, kind: r.kind, frequency: r.frequency, next_due: r.nextDue, match_key: r.key }).select('id').single();
+    if (error) return toast(error.message, true);
+    S.editingBill = data.id;
+    toast(`${r.name} added. Adjust anything below and click Save.`);
+    reload();
   }
   if (action === 'ignore-rec') {
     const r = S.detected[+el.dataset.i];
@@ -737,6 +762,13 @@ document.addEventListener('submit', async (ev) => {
     if (await saveSettings({ goal: d })) {
       toast('Goal saved');
       render();
+    }
+  }
+  if (form.id === 'bill-edit-form') {
+    const row = { name: d.name.trim(), amount: +d.amount, kind: d.kind, frequency: d.frequency, next_due: d.next_due };
+    if (await run(sb.from('bills').update(row).eq('id', form.dataset.id), 'Saved')) {
+      S.editingBill = null;
+      reload();
     }
   }
   if (form.id === 'bill-form') {
